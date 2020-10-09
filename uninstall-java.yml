@@ -1,0 +1,22 @@
+---
+- name: Simple playbook for uninstalling JRE
+  hosts: all
+  vars:
+    ora_java_package: jre1.8-1.8.0_261-fcs.x86_64
+    ora_java__state: absent
+  tasks:
+    - name: Uninstall JRE
+      dnf:
+        name: "{{ ora_java_package }}"
+        state: "{{ ora_java__state }}"
+        autoremove: yes
+      become: true
+
+          #    - name: Download Java
+          #      get_url:
+          #              #url: "http://download.oracle.com/otn-pub/java/jdk/10.0.2+13/19aef61b38124481863b1413dce1855f/jre-10.0.2_linux-x64_bin.rpm"
+          #        url: "http://download.oracle.com/otn-pub/java/jdk/8u131-b11/d54c1d3a095b4ff2b6607d096fa80163/jre-8u131-linux-x64.tar.gz"
+          #        dest: "/tmp/"
+          #        headers:
+          #          Cookie: oraclelicense=accept-securebackup-cookie
+          #          Accept: '*/*'
