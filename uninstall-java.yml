@@ -1,17 +1,84 @@
 ---
 - name: Simple playbook for uninstalling JRE
   hosts: all
+  become: true
   vars:
-    ora_java_package: jre1.8-1.8.0_261-fcs.x86_64
-    ora_java__state: absent
+    ora_java_package:
+        - "jre1.8-1.8.0_261-fcs.x86_64"
+        - "jdk-14.0.2.x86_64"
+        - "jdk-14.0.2-14.0.2-ga.x86_64"
+    ora_java_state: absent
+    cassandra_nodetool_cmd: "/usr/bin/nodetool"
+
   tasks:
     - name: Uninstall JRE
-      dnf:
-        name: "{{ ora_java_package }}"
-        state: "{{ ora_java__state }}"
-        autoremove: yes
+      yum:
+        pkg: "{{ ora_java_package }}"
+        state: "{{ ora_java_state }}"
+        autoremove: true
       become: true
+      loop:
+         - "{{ ora_java_package }}"
 
+    - name: Check for Cassandra
+      stat:
+        path: /etc/dse/cassandra/cassandra.yaml
+      register: cassandra_present
+
+
+    - block:
+        - name: Drain Cassandra node {{ inventory_hostname }}
+          command: "{{ cassandra_nodetool_cmd }} drain"
+          ignore_errors: true
+          when: cassandra_present.stat.exists
+        - name: Stop DSE Service
+          systemd:
+            name: "dse"
+            state: stopped
+            enabled: false
+            daemon_reload: no
+          register: stop_dse
+          retries: 3
+          until: stop_dse is succeeded
+          when: cassandra_present.stat.exists
+
+    - block:
+        - name: Pause before starting DSE
+          pause:
+            seconds: "30"
+        - name: start Cassandra
+          systemd:
+            name: "dse"
+            state: started
+            enabled: true
+            daemon_reload: no
+          register: start_dse
+          retries: 2
+          until: start_dse is succeeded
+          when: cassandra_present.stat.exists
+          #        - name: Wait for Cassandra to boot
+          #          wait_for:
+          #            port: 9042
+          #            host: "{{ inventory_hostname }}"
+          #            state: started
+          #            timeout: 1000
+          #          when: cassandra_present.stat.exists
+
+
+      # shell: rpm -e jdk-14.0.2-14.0.2-ga.x86_64
+      #      dnf:
+      #              #        name: "jre1.8-1.8.0_261-fcs.x86_64"
+      #        name: "jdk-14.0.2-14.0.2-ga.x86_64"
+      #        state: present
+      #        validate_certs: "no"
+      #        #autoremove: true
+      #become: true
+
+
+
+
+          #      with_items:
+          #        - "{{ ora_java_package }}"
           #    - name: Download Java
           #      get_url:
           #              #url: "http://download.oracle.com/otn-pub/java/jdk/10.0.2+13/19aef61b38124481863b1413dce1855f/jre-10.0.2_linux-x64_bin.rpm"
