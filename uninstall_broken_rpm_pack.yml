@@ -1,0 +1,64 @@
+---
+- name: Simple playbook for uninstalling JRE
+  hosts: all
+  tasks:
+    - name: register output
+      shell: rpm -qa | grep -i oracle
+      args:
+        warn: false
+      failed_when: no
+      ignore_errors: yes
+      register: oracle_packs
+
+    - debug: var=oracle_packs
+
+    - name: Uninstall JRE
+      shell: "rpm -e {{ item }} --noscripts"
+      loop: "{{ oracle_packs.stdout_lines }}"
+      args:
+        warn: false
+      when: oracle_packs.stdout != ""
+      become: true
+
+    - name: Check for Cassandra
+      stat:
+        path: /etc/dse/cassandra/cassandra.yaml
+      register: cassandra_present
+
+    - block:
+        - name: Drain Cassandra node {{ inventory_hostname }}
+          command: "{{ cassandra_nodetool_cmd }} drain"
+          ignore_errors: true
+          when: cassandra_present.stat.exists
+        - name: Stop DSE Service
+          systemd:
+            name: "dse"
+            state: stopped
+            enabled: false
+            daemon_reload: no
+          register: stop_dse
+          retries: 3
+          until: stop_dse is succeeded
+          when: cassandra_present.stat.exists
+
+    - block:
+        - name: Pause before starting DSE
+          pause:
+            seconds: "30"
+        - name: start Cassandra
+          systemd:
+            name: "dse"
+            state: started
+            enabled: true
+            daemon_reload: no
+          register: start_dse
+          retries: 2
+          until: start_dse is succeeded
+          when: cassandra_present.stat.exists
+        - name: Wait for Cassandra to boot
+          wait_for:
+            port: 9042
+            host: "{{ inventory_hostname }}"
+            state: started
+            timeout: 1000
+          when: cassandra_present.stat.exists
