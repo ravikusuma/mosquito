@@ -1,0 +1,74 @@
+---
+- name: Simple playbook for dse restart
+  hosts: all
+  serial: "{{ howmany|default(1)|int }}"
+  become: true
+  strategy: linear
+  vars:
+    cassandra_nodetool_cmd: "/usr/bin/nodetool"
+    inventory_hostname: 1234
+  tasks:
+    - name: register dse status
+      shell: ps -ef | grep -i cassand+ | grep -vE "grep|collectd_wrapper"
+      failed_when: no
+      ignore_errors: yes
+      register: dse_status
+
+    - debug: var=dse_status
+
+    - name: call cassandra handler 
+      shell: /bin/true
+      when: dse_status.stdout == ""
+      notify:
+      -  Check for Cassandra
+      -  Drain Cassandra node {{ inventory_hostname }}
+      -  Stop DSE Service
+      -  start Cassandra
+
+  handlers:
+   - name: Check for Cassandra
+     stat:
+       path: /etc/dse/cassandra/cassandra.yaml
+     register: cassandra_present
+
+   - name: Drain Cassandra node {{ inventory_hostname }}
+     command: "{{ cassandra_nodetool_cmd }} drain"
+     ignore_errors: true
+     when: cassandra_present.stat.exists
+
+   - name: Stop DSE Service
+     systemd:
+       name: "dse"
+       state: stopped
+       enabled: false
+       daemon_reload: no
+     register: stop_dse
+     retries: 3
+     until: stop_dse is succeeded
+     when: cassandra_present.stat.exists
+   - name: Pause before starting DSE
+     pause:
+       seconds: "30"
+
+   - name: start Cassandra
+     systemd:
+       name: "dse"
+       state: started
+       enabled: true
+       daemon_reload: no
+     register: start_dse
+     retries: 2
+     until: start_dse is succeeded
+     when: cassandra_present.stat.exists
+   - name: Wait for Cassandra to boot
+     wait_for:
+       port: 9042
+       host: "{{ inventory_hostname }}"
+       state: started
+       timeout: 1000
+     when: cassandra_present.stat.exists
+
+  post_tasks:
+    - name: Pause before triggering next node
+      pause:
+        minutes: "{{ pause_time|default(5)|int }}"
